@@ -4,16 +4,28 @@ import { IpcServer } from "./ipc-server.js";
 import { SessionManager } from "./session-manager.js";
 import { PermissionProxy } from "./permission-proxy.js";
 import { Session } from "./session.js";
+import { EventBuffer } from "./event-buffer.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
+
+const BUFFERED_TYPES = new Set(["output", "permission_request", "prompt_complete", "error", "session_closed"]);
 
 export class Daemon {
   private ipcServer: IpcServer;
   private sessionManager: SessionManager;
   private permissionProxy: PermissionProxy;
   private sessions = new Map<string, Session>();
+  private eventBuffer: EventBuffer;
 
   constructor(private config: DaemonConfig) {
-    const emit = (event: DaemonEvent) => this.ipcServer.broadcast(event);
+    this.eventBuffer = new EventBuffer(config.maxBufferedEvents);
+
+    const emit = (event: DaemonEvent) => {
+      this.broadcastAndBuffer(event);
+      // When SessionManager emits session_closed (e.g. TTL expiry), mark buffer as draining
+      if (event.type === "session_closed" && "sessionId" in event) {
+        this.eventBuffer.markDraining((event as any).sessionId);
+      }
+    };
 
     this.sessionManager = new SessionManager(config, emit);
     this.permissionProxy = new PermissionProxy(config.permissionTimeoutMinutes, emit);
@@ -23,6 +35,13 @@ export class Daemon {
     });
   }
 
+  private broadcastAndBuffer(event: DaemonEvent): void {
+    if (BUFFERED_TYPES.has(event.type) && "sessionId" in event) {
+      this.eventBuffer.push((event as any).sessionId, event as any);
+    }
+    this.ipcServer.broadcast(event);
+  }
+
   async start(): Promise<void> {
     await this.ipcServer.start();
     console.log(`[acpx-node-daemon] listening on ${this.config.ipcSocketPath}`);
@@ -30,6 +49,7 @@ export class Daemon {
 
   async stop(): Promise<void> {
     for (const session of this.sessionManager.listSessions()) {
+      // Intentionally NOT buffered — daemon is shutting down
       this.ipcServer.broadcast({
         type: "session_closed",
         sessionId: session.sessionId,
@@ -63,7 +83,10 @@ export class Daemon {
         this.handleStatus(req, send);
         break;
       case "permission_response":
-        this.handlePermissionResponse(req);
+        this.handlePermissionResponse(req, send);
+        break;
+      case "drain":
+        this.handleDrain(req, send);
         break;
     }
   }
@@ -78,7 +101,7 @@ export class Daemon {
         ttlMinutes: req.timeoutMinutes,
       });
 
-      const emit = (event: DaemonEvent) => this.ipcServer.broadcast(event);
+      const emit = (event: DaemonEvent) => this.broadcastAndBuffer(event);
 
       const agentSession = new Session(
         req.sessionId,
@@ -96,7 +119,6 @@ export class Daemon {
         type: "spawn_result",
         sessionId: req.sessionId,
         success: true,
-        // pid is undefined until first prompt starts Claude Code
       });
     } catch (err) {
       send({
@@ -128,11 +150,11 @@ export class Daemon {
     this.sessionManager.setStatus(req.sessionId, "busy");
     send({ type: "prompt_accepted", sessionId: req.sessionId });
 
-    // Run prompt in background — output streams via broadcast
+    // Run prompt in background — output streams via broadcastAndBuffer
     agentSession.prompt(req.prompt).then(() => {
       this.sessionManager.setStatus(req.sessionId, "idle");
     }).catch((err) => {
-      this.ipcServer.broadcast({
+      this.broadcastAndBuffer({
         type: "error",
         sessionId: req.sessionId,
         error: err instanceof Error ? err.message : String(err),
@@ -151,6 +173,7 @@ export class Daemon {
     if (agentSession) {
       agentSession.cancel();
     }
+    send({ type: "cancel_accepted", sessionId: req.sessionId });
   }
 
   private handleClose(req: DaemonRequest & { type: "close" }, send: (event: DaemonEvent) => void): void {
@@ -166,11 +189,12 @@ export class Daemon {
     }
     this.permissionProxy.cleanupSession(req.sessionId);
     this.sessionManager.removeSession(req.sessionId);
-    this.ipcServer.broadcast({
+    this.broadcastAndBuffer({
       type: "session_closed",
       sessionId: req.sessionId,
       reason: "user_closed",
     });
+    this.eventBuffer.markDraining(req.sessionId);
   }
 
   private handleStatus(req: DaemonRequest & { type: "status" }, send: (event: DaemonEvent) => void): void {
@@ -193,7 +217,22 @@ export class Daemon {
     });
   }
 
-  private handlePermissionResponse(req: DaemonRequest & { type: "permission_response" }): void {
+  private handlePermissionResponse(req: DaemonRequest & { type: "permission_response" }, send: (event: DaemonEvent) => void): void {
     this.permissionProxy.handleResponse(req.sessionId, req.permissionId, req.approved);
+    send({ type: "permission_response_result", sessionId: req.sessionId, success: true });
+  }
+
+  private handleDrain(req: DaemonRequest & { type: "drain" }, send: (event: DaemonEvent) => void): void {
+    if (!this.sessionManager.getSession(req.sessionId) && !this.eventBuffer.hasSession(req.sessionId)) {
+      send({ type: "error", sessionId: req.sessionId, error: "Session not found" });
+      return;
+    }
+    const result = this.eventBuffer.drain(req.sessionId);
+    send({
+      type: "drain_result",
+      sessionId: req.sessionId,
+      events: result.events,
+      hasMore: result.hasMore,
+    });
   }
 }
