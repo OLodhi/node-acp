@@ -121,6 +121,10 @@ if (command === "start") {
       sendAndListen({ type: "close", sessionId });
       break;
     }
+    case "stop":
+      console.error("'stop' is not yet implemented. Kill the daemon process directly (Ctrl+C or SIGTERM).");
+      process.exit(1);
+      break;
     default:
       console.error(`Unknown command: ${command}`);
       process.exit(1);

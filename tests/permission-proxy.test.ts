@@ -44,10 +44,11 @@ describe("PermissionProxy", () => {
     expect(result).toBe(false);
   }, 5000);
 
-  it("cleans up pending permissions for a session", () => {
-    proxy.requestPermission("sess-1", "writeFile", "/a", "d");
-    proxy.requestPermission("sess-1", "writeFile", "/b", "d");
+  it("cleans up pending permissions for a session", async () => {
+    const p1 = proxy.requestPermission("sess-1", "writeFile", "/a", "d");
+    const p2 = proxy.requestPermission("sess-1", "writeFile", "/b", "d");
     proxy.cleanupSession("sess-1");
-    // Should not throw
+    expect(await p1).toBe(false);
+    expect(await p2).toBe(false);
   });
 });

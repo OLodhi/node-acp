@@ -27,8 +27,13 @@ export class Daemon {
   }
 
   async stop(): Promise<void> {
-    // Close all sessions
+    // Close all sessions and notify connected clients
     for (const session of this.sessionManager.listSessions()) {
+      this.ipcServer.broadcast({
+        type: "session_closed",
+        sessionId: session.sessionId,
+        reason: "daemon_stopped",
+      });
       this.permissionProxy.cleanupSession(session.sessionId);
       this.sessionManager.removeSession(session.sessionId);
     }

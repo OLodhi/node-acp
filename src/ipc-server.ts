@@ -22,10 +22,12 @@ export class IpcServer {
   ) {}
 
   async start(): Promise<void> {
-    // Clean up stale socket
-    try {
-      unlinkSync(this.socketPath);
-    } catch {}
+    // Clean up stale socket (Unix sockets only; Windows named pipes are not filesystem entries)
+    if (process.platform !== "win32") {
+      try {
+        unlinkSync(this.socketPath);
+      } catch {}
+    }
 
     return new Promise((resolve, reject) => {
       this.server = createServer((socket) => this.handleConnection(socket));
@@ -43,9 +45,11 @@ export class IpcServer {
     return new Promise((resolve) => {
       if (!this.server) return resolve();
       this.server.close(() => {
-        try {
-          unlinkSync(this.socketPath);
-        } catch {}
+        if (process.platform !== "win32") {
+          try {
+            unlinkSync(this.socketPath);
+          } catch {}
+        }
         this.server = null;
         resolve();
       });
