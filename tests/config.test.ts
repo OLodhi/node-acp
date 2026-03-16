@@ -8,6 +8,7 @@ describe("Config", () => {
     expect(config.defaultAgent).toBe("claude");
     expect(config.defaultModel).toBe("claude-opus-4-6");
     expect(config.defaultPermissionMode).toBe("default");
+    expect(config.maxBufferedEvents).toBe(500);
     expect(config.defaultTtlMinutes).toBe(120);
     expect(config.permissionTimeoutMinutes).toBe(30);
   });

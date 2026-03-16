@@ -5,6 +5,7 @@ export interface DaemonConfig {
   defaultPermissionMode: string;
   defaultTtlMinutes: number;
   permissionTimeoutMinutes: number;
+  maxBufferedEvents: number;
   ipcSocketPath: string;
 }
 
@@ -21,6 +22,7 @@ export function loadConfig(overrides: Partial<DaemonConfig>): DaemonConfig {
     defaultPermissionMode: overrides.defaultPermissionMode ?? "default",
     defaultTtlMinutes: overrides.defaultTtlMinutes ?? 120,
     permissionTimeoutMinutes: overrides.permissionTimeoutMinutes ?? 30,
+    maxBufferedEvents: overrides.maxBufferedEvents ?? 500,
     ipcSocketPath: overrides.ipcSocketPath ?? DEFAULT_SOCKET_PATH,
   };
 }

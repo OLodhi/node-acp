@@ -38,13 +38,19 @@ export interface PermissionResponseRequest {
   approved: boolean;
 }
 
+export interface DrainRequest {
+  type: "drain";
+  sessionId: string;
+}
+
 export type DaemonRequest =
   | SpawnRequest
   | PromptRequest
   | CancelRequest
   | CloseRequest
   | StatusRequest
-  | PermissionResponseRequest;
+  | PermissionResponseRequest
+  | DrainRequest;
 
 // --- Outbound: daemon → node host ---
 
@@ -108,6 +114,24 @@ export interface StatusResultEvent {
   lastActivityAt: number;
 }
 
+export interface DrainResultEvent {
+  type: "drain_result";
+  sessionId: string;
+  events: DaemonEvent[];
+  hasMore: boolean;
+}
+
+export interface CancelAcceptedEvent {
+  type: "cancel_accepted";
+  sessionId: string;
+}
+
+export interface PermissionResponseResultEvent {
+  type: "permission_response_result";
+  sessionId: string;
+  success: boolean;
+}
+
 export type DaemonEvent =
   | SpawnResultEvent
   | PromptAcceptedEvent
@@ -116,7 +140,10 @@ export type DaemonEvent =
   | PromptCompleteEvent
   | ErrorEvent
   | SessionClosedEvent
-  | StatusResultEvent;
+  | StatusResultEvent
+  | DrainResultEvent
+  | CancelAcceptedEvent
+  | PermissionResponseResultEvent;
 
 // --- Serialization ---
 

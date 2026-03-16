@@ -58,6 +58,47 @@ describe("IPC Protocol", () => {
     expect(result).toEqual(event);
   });
 
+  it("serializes a drain request", () => {
+    const req: DaemonRequest = {
+      type: "drain",
+      sessionId: "test-123",
+    };
+    const serialized = serializeMessage(req);
+    expect(serialized).toBe(JSON.stringify(req) + "\n");
+  });
+
+  it("deserializes a drain_result event", () => {
+    const event: DaemonEvent = {
+      type: "drain_result",
+      sessionId: "test-123",
+      events: [
+        { type: "output", sessionId: "test-123", messageType: "assistant_text", chunk: "hello", timestamp: 1234 },
+      ],
+      hasMore: false,
+    };
+    const result = deserializeMessage(JSON.stringify(event));
+    expect(result).toEqual(event);
+  });
+
+  it("deserializes a cancel_accepted event", () => {
+    const event: DaemonEvent = {
+      type: "cancel_accepted",
+      sessionId: "test-123",
+    };
+    const result = deserializeMessage(JSON.stringify(event));
+    expect(result).toEqual(event);
+  });
+
+  it("deserializes a permission_response_result event", () => {
+    const event: DaemonEvent = {
+      type: "permission_response_result",
+      sessionId: "test-123",
+      success: true,
+    };
+    const result = deserializeMessage(JSON.stringify(event));
+    expect(result).toEqual(event);
+  });
+
   it("rejects invalid JSON", () => {
     expect(() => deserializeMessage("not json")).toThrow();
   });
