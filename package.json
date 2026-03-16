@@ -1,0 +1,26 @@
+{
+  "name": "acpx-node-daemon",
+  "version": "0.1.0",
+  "description": "Remote ACP session dispatch for OpenClaw nodes",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "acpx-node-daemon": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "@types/node": "^22.0.0"
+  }
+}
