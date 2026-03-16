@@ -1,0 +1,1 @@
+# Node ACP\n\nRemote ACP session dispatch for OpenClaw nodes.\n\nEnables spawning ACP coding sessions (Claude Code, Codex, etc.) on paired remote nodes via the existing OpenClaw node WebSocket protocol.
