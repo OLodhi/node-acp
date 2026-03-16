@@ -87,10 +87,14 @@ export class Session {
         forwardOutput(message, this.sessionId, this.emit);
       }
     } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorStack = err instanceof Error ? err.stack : undefined;
+      console.error(`[session ${this.sessionId}] prompt error:`, errorMsg);
+      if (errorStack) console.error(errorStack);
       this.emit({
         type: "error",
         sessionId: this.sessionId,
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMsg,
       });
     } finally {
       this._status = "idle";

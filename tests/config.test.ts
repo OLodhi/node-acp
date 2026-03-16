@@ -7,7 +7,7 @@ describe("Config", () => {
     expect(config.maxConcurrentSessions).toBe(4);
     expect(config.defaultAgent).toBe("claude");
     expect(config.defaultModel).toBe("claude-opus-4-6");
-    expect(config.defaultPermissionMode).toBe("approve-reads");
+    expect(config.defaultPermissionMode).toBe("default");
     expect(config.defaultTtlMinutes).toBe(120);
     expect(config.permissionTimeoutMinutes).toBe(30);
   });
