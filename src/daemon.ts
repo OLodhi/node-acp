@@ -1,14 +1,16 @@
 // src/daemon.ts
 import type { DaemonConfig } from "./config.js";
-import { IpcServer, type RequestHandler } from "./ipc-server.js";
+import { IpcServer } from "./ipc-server.js";
 import { SessionManager } from "./session-manager.js";
 import { PermissionProxy } from "./permission-proxy.js";
+import { Session } from "./session.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
 
 export class Daemon {
   private ipcServer: IpcServer;
   private sessionManager: SessionManager;
   private permissionProxy: PermissionProxy;
+  private sessions = new Map<string, Session>();
 
   constructor(private config: DaemonConfig) {
     const emit = (event: DaemonEvent) => this.ipcServer.broadcast(event);
@@ -27,16 +29,18 @@ export class Daemon {
   }
 
   async stop(): Promise<void> {
-    // Close all sessions and notify connected clients
     for (const session of this.sessionManager.listSessions()) {
       this.ipcServer.broadcast({
         type: "session_closed",
         sessionId: session.sessionId,
         reason: "daemon_stopped",
       });
+      const agentSession = this.sessions.get(session.sessionId);
+      if (agentSession) agentSession.close();
       this.permissionProxy.cleanupSession(session.sessionId);
       this.sessionManager.removeSession(session.sessionId);
     }
+    this.sessions.clear();
     await this.ipcServer.stop();
     console.log("[acpx-node-daemon] stopped");
   }
@@ -66,7 +70,7 @@ export class Daemon {
 
   private handleSpawn(req: DaemonRequest & { type: "spawn" }, send: (event: DaemonEvent) => void): void {
     try {
-      const session = this.sessionManager.registerSession(req.sessionId, {
+      this.sessionManager.registerSession(req.sessionId, {
         agent: req.agent,
         cwd: req.cwd,
         model: req.model,
@@ -74,15 +78,25 @@ export class Daemon {
         ttlMinutes: req.timeoutMinutes,
       });
 
-      // TODO: Task 9 — actually spawn Claude Code via ACPX queue owner here
-      // For now, mark as idle (ready to accept prompts)
+      const emit = (event: DaemonEvent) => this.ipcServer.broadcast(event);
+
+      const agentSession = new Session(
+        req.sessionId,
+        req.cwd,
+        req.model,
+        req.permissionMode,
+        this.permissionProxy,
+        emit
+      );
+      this.sessions.set(req.sessionId, agentSession);
+
       this.sessionManager.setStatus(req.sessionId, "idle");
 
       send({
         type: "spawn_result",
         sessionId: req.sessionId,
         success: true,
-        pid: 0, // placeholder until ACPX integration
+        // pid is undefined until first prompt starts Claude Code
       });
     } catch (err) {
       send({
@@ -95,55 +109,63 @@ export class Daemon {
   }
 
   private handlePrompt(req: DaemonRequest & { type: "prompt" }, send: (event: DaemonEvent) => void): void {
-    const session = this.sessionManager.getSession(req.sessionId);
-    if (!session) {
+    const managed = this.sessionManager.getSession(req.sessionId);
+    if (!managed) {
       send({ type: "error", sessionId: req.sessionId, error: "Session not found" });
       return;
     }
-    if (session.status !== "idle") {
-      send({ type: "error", sessionId: req.sessionId, error: `Session is ${session.status}, not idle` });
+    if (managed.status !== "idle") {
+      send({ type: "error", sessionId: req.sessionId, error: `Session is ${managed.status}, not idle` });
+      return;
+    }
+
+    const agentSession = this.sessions.get(req.sessionId);
+    if (!agentSession) {
+      send({ type: "error", sessionId: req.sessionId, error: "Agent session not found" });
       return;
     }
 
     this.sessionManager.setStatus(req.sessionId, "busy");
     send({ type: "prompt_accepted", sessionId: req.sessionId });
 
-    // TODO: Task 9 — forward prompt to ACPX queue owner
-    // For now, send a mock response
-    this.ipcServer.broadcast({
-      type: "output",
-      sessionId: req.sessionId,
-      messageType: "assistant_text",
-      chunk: `[mock] Received prompt: ${req.prompt}`,
-      timestamp: Date.now(),
+    // Run prompt in background — output streams via broadcast
+    agentSession.prompt(req.prompt).then(() => {
+      this.sessionManager.setStatus(req.sessionId, "idle");
+    }).catch((err) => {
+      this.ipcServer.broadcast({
+        type: "error",
+        sessionId: req.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.sessionManager.setStatus(req.sessionId, "idle");
     });
-    this.ipcServer.broadcast({
-      type: "prompt_complete",
-      sessionId: req.sessionId,
-      stopReason: "end_turn",
-    });
-    this.sessionManager.setStatus(req.sessionId, "idle");
   }
 
   private handleCancel(req: DaemonRequest & { type: "cancel" }, send: (event: DaemonEvent) => void): void {
-    const session = this.sessionManager.getSession(req.sessionId);
-    if (!session) {
+    const managed = this.sessionManager.getSession(req.sessionId);
+    if (!managed) {
       send({ type: "error", sessionId: req.sessionId, error: "Session not found" });
       return;
     }
-    // TODO: Task 9 — cancel via ACPX
-    this.sessionManager.setStatus(req.sessionId, "idle");
+    const agentSession = this.sessions.get(req.sessionId);
+    if (agentSession) {
+      agentSession.cancel();
+    }
   }
 
   private handleClose(req: DaemonRequest & { type: "close" }, send: (event: DaemonEvent) => void): void {
-    const session = this.sessionManager.getSession(req.sessionId);
-    if (!session) {
+    const managed = this.sessionManager.getSession(req.sessionId);
+    if (!managed) {
       send({ type: "error", sessionId: req.sessionId, error: "Session not found" });
       return;
     }
+    const agentSession = this.sessions.get(req.sessionId);
+    if (agentSession) {
+      agentSession.close();
+      this.sessions.delete(req.sessionId);
+    }
     this.permissionProxy.cleanupSession(req.sessionId);
     this.sessionManager.removeSession(req.sessionId);
-    // TODO: Task 9 — kill ACPX queue owner process
     this.ipcServer.broadcast({
       type: "session_closed",
       sessionId: req.sessionId,
@@ -152,21 +174,22 @@ export class Daemon {
   }
 
   private handleStatus(req: DaemonRequest & { type: "status" }, send: (event: DaemonEvent) => void): void {
-    const session = this.sessionManager.getSession(req.sessionId);
-    if (!session) {
+    const managed = this.sessionManager.getSession(req.sessionId);
+    if (!managed) {
       send({ type: "error", sessionId: req.sessionId, error: "Session not found" });
       return;
     }
+    const agentSession = this.sessions.get(req.sessionId);
     send({
       type: "status_result",
-      sessionId: session.sessionId,
-      status: session.status,
-      agent: session.agent,
-      cwd: session.cwd,
-      model: session.model,
-      pid: session.pid ?? 0,
-      createdAt: session.createdAt,
-      lastActivityAt: session.lastActivityAt,
+      sessionId: managed.sessionId,
+      status: managed.status,
+      agent: managed.agent,
+      cwd: managed.cwd,
+      model: managed.model,
+      pid: agentSession?.pid ?? 0,
+      createdAt: managed.createdAt,
+      lastActivityAt: managed.lastActivityAt,
     });
   }
 
