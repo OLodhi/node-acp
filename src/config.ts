@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+
 export interface DaemonConfig {
   maxConcurrentSessions: number;
   defaultAgent: string;
@@ -7,6 +9,8 @@ export interface DaemonConfig {
   permissionTimeoutMinutes: number;
   maxBufferedEvents: number;
   ipcSocketPath: string;
+  claudeBin: string;
+  defaultCwd: string;
 }
 
 const DEFAULT_SOCKET_PATH =
@@ -18,11 +22,13 @@ export function loadConfig(overrides: Partial<DaemonConfig>): DaemonConfig {
   return {
     maxConcurrentSessions: overrides.maxConcurrentSessions ?? 4,
     defaultAgent: overrides.defaultAgent ?? "claude",
-    defaultModel: overrides.defaultModel ?? "claude-opus-4-6",
-    defaultPermissionMode: overrides.defaultPermissionMode ?? "bypassPermissions",
+    defaultModel: process.env.ACPX_MODEL ?? overrides.defaultModel ?? "",
+    defaultPermissionMode: process.env.ACPX_PERMISSION_MODE ?? overrides.defaultPermissionMode ?? "bypassPermissions",
     defaultTtlMinutes: overrides.defaultTtlMinutes ?? 120,
     permissionTimeoutMinutes: overrides.permissionTimeoutMinutes ?? 30,
     maxBufferedEvents: overrides.maxBufferedEvents ?? 500,
-    ipcSocketPath: overrides.ipcSocketPath ?? DEFAULT_SOCKET_PATH,
+    ipcSocketPath: process.env.ACPX_SOCKET_PATH ?? overrides.ipcSocketPath ?? DEFAULT_SOCKET_PATH,
+    claudeBin: process.env.ACPX_CLAUDE_BIN ?? overrides.claudeBin ?? "claude",
+    defaultCwd: overrides.defaultCwd ?? homedir(),
   };
 }

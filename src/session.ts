@@ -26,6 +26,7 @@ export class Session {
   private cwd: string;
   private model: string;
   private permissionMode: string;
+  private claudeBin: string;
   private permissionProxy: PermissionProxy;
   private emit: (event: DaemonEvent) => void;
 
@@ -34,6 +35,7 @@ export class Session {
     cwd: string,
     model: string,
     permissionMode: string,
+    claudeBin: string,
     permissionProxy: PermissionProxy,
     emit: (event: DaemonEvent) => void
   ) {
@@ -41,6 +43,7 @@ export class Session {
     this.cwd = cwd;
     this.model = model;
     this.permissionMode = permissionMode;
+    this.claudeBin = claudeBin;
     this.permissionProxy = permissionProxy;
     this.emit = emit;
   }
@@ -90,7 +93,7 @@ export class Session {
       console.log(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
       console.log(`${DIM}  resume: ${this._resumeSessionId ?? "(new session)"}${RESET}\n`);
 
-      const proc = spawn("claude", args, {
+      const proc = spawn(this.claudeBin, args, {
         cwd: this.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: true,

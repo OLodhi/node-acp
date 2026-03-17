@@ -108,6 +108,7 @@ export class Daemon {
         req.cwd,
         req.model,
         req.permissionMode,
+        this.config.claudeBin,
         this.permissionProxy,
         emit
       );

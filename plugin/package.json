@@ -1,0 +1,25 @@
+{
+  "name": "openclaw-acpx-remote",
+  "version": "1.0.0",
+  "description": "Run Claude Code sessions on remote OpenClaw nodes",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./src/index.ts"]
+  },
+  "files": [
+    "dist/",
+    "openclaw.plugin.json",
+    "skills/",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
+}

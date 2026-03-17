@@ -6,8 +6,10 @@ describe("Config", () => {
     const config = loadConfig({});
     expect(config.maxConcurrentSessions).toBe(4);
     expect(config.defaultAgent).toBe("claude");
-    expect(config.defaultModel).toBe("claude-opus-4-6");
-    expect(config.defaultPermissionMode).toBe("default");
+    expect(config.defaultModel).toBe("");
+    expect(config.defaultPermissionMode).toBe("bypassPermissions");
+    expect(config.claudeBin).toBe("claude");
+    expect(typeof config.defaultCwd).toBe("string");
     expect(config.maxBufferedEvents).toBe(500);
     expect(config.defaultTtlMinutes).toBe(120);
     expect(config.permissionTimeoutMinutes).toBe(30);

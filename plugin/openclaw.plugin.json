@@ -1,0 +1,56 @@
+{
+  "id": "acpx-remote",
+  "name": "Remote ACP Sessions",
+  "description": "Run Claude Code sessions on remote OpenClaw nodes. Auto-deploys and manages the daemon on target nodes.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "defaultNode": {
+        "type": "string",
+        "description": "Default OpenClaw node name for remote sessions"
+      },
+      "model": {
+        "type": "string",
+        "default": "claude-sonnet-4-6",
+        "description": "Claude model to use for coding sessions"
+      },
+      "permissionMode": {
+        "type": "string",
+        "enum": ["bypassPermissions", "default", "acceptEdits"],
+        "default": "bypassPermissions",
+        "description": "Permission mode for Claude Code tool execution"
+      },
+      "pollIntervalMs": {
+        "type": "number",
+        "default": 2000,
+        "description": "Interval between drain polls in milliseconds"
+      },
+      "autoDeployDaemon": {
+        "type": "boolean",
+        "default": true,
+        "description": "Automatically install the daemon on nodes when missing"
+      },
+      "sessionTimeoutMinutes": {
+        "type": "number",
+        "default": 120,
+        "description": "Session auto-close timeout in minutes"
+      },
+      "maxConcurrentSessions": {
+        "type": "number",
+        "default": 4,
+        "description": "Maximum concurrent sessions per node"
+      }
+    },
+    "required": ["defaultNode"]
+  },
+  "uiHints": {
+    "defaultNode": { "label": "Node Name", "help": "The OpenClaw node to run Claude Code on" },
+    "model": { "label": "Model", "help": "Claude model ID (e.g. claude-sonnet-4-6, claude-opus-4-6)", "advanced": true },
+    "permissionMode": { "label": "Permission Mode", "advanced": true },
+    "pollIntervalMs": { "label": "Poll Interval (ms)", "advanced": true },
+    "autoDeployDaemon": { "label": "Auto-deploy daemon", "help": "Automatically install the daemon on nodes when not found" },
+    "sessionTimeoutMinutes": { "label": "Session Timeout (min)", "advanced": true },
+    "maxConcurrentSessions": { "label": "Max Sessions", "advanced": true }
+  },
+  "skills": ["skills/acp-node-router"]
+}

@@ -3,3 +3,11 @@ dist/
 .env
 *.log
 .worktrees/
+
+# Plugin
+plugin/dist/
+plugin/node_modules/
+
+# Daemon runtime
+.acpx-node-daemon.pid
+.acpx-node-daemon.log
