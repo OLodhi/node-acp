@@ -1,0 +1,26 @@
+{
+  "id": "acpx-remote",
+  "name": "Remote ACP Sessions",
+  "description": "Spawn ACP sessions on remote OpenClaw nodes via the node host",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "pollIntervalMs": {
+        "type": "number",
+        "default": 1500,
+        "description": "Interval between drain polls in milliseconds"
+      },
+      "daemonBin": {
+        "type": "string",
+        "default": "acpx-node-daemon",
+        "description": "Name or path to the daemon binary on the node"
+      },
+      "defaultNode": {
+        "type": "string",
+        "default": "",
+        "description": "Default node name if --node is omitted"
+      }
+    }
+  },
+  "skills": ["skills/acp-node-router"]
+}
