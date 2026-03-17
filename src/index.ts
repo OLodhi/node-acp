@@ -74,7 +74,7 @@ if (command === "start") {
           return;
         }
 
-        console.log(JSON.stringify(event, null, 2));
+        console.log(JSON.stringify(event));
 
         // Exit after terminal events
         if (
@@ -146,7 +146,7 @@ if (command === "start") {
           for (const line of lines) {
             if (!line.trim()) continue;
             const event = deserializeMessage(line) as DaemonEvent;
-            console.log(JSON.stringify(event, null, 2));
+            console.log(JSON.stringify(event));
             if (event.type === "prompt_accepted" || event.type === "error") {
               client.destroy();
             }

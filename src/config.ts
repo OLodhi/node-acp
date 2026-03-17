@@ -19,7 +19,7 @@ export function loadConfig(overrides: Partial<DaemonConfig>): DaemonConfig {
     maxConcurrentSessions: overrides.maxConcurrentSessions ?? 4,
     defaultAgent: overrides.defaultAgent ?? "claude",
     defaultModel: overrides.defaultModel ?? "claude-opus-4-6",
-    defaultPermissionMode: overrides.defaultPermissionMode ?? "default",
+    defaultPermissionMode: overrides.defaultPermissionMode ?? "bypassPermissions",
     defaultTtlMinutes: overrides.defaultTtlMinutes ?? 120,
     permissionTimeoutMinutes: overrides.permissionTimeoutMinutes ?? 30,
     maxBufferedEvents: overrides.maxBufferedEvents ?? 500,
