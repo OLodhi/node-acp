@@ -29,6 +29,7 @@ export class Session {
   private claudeBin: string;
   private permissionProxy: PermissionProxy;
   private emit: (event: DaemonEvent) => void;
+  private writer: (line: string) => void;
 
   constructor(
     sessionId: string,
@@ -37,7 +38,8 @@ export class Session {
     permissionMode: string,
     claudeBin: string,
     permissionProxy: PermissionProxy,
-    emit: (event: DaemonEvent) => void
+    emit: (event: DaemonEvent) => void,
+    writer?: (line: string) => void
   ) {
     this.sessionId = sessionId;
     this.cwd = cwd;
@@ -46,6 +48,7 @@ export class Session {
     this.claudeBin = claudeBin;
     this.permissionProxy = permissionProxy;
     this.emit = emit;
+    this.writer = writer ?? ((line) => console.log(line));
   }
 
   get status(): "idle" | "busy" {
@@ -88,15 +91,22 @@ export class Session {
         args.push("--resume", this._resumeSessionId);
       }
 
-      console.log(`\n${BLUE}${BOLD}━━━ Claude Code Session ${tag} ━━━${RESET}`);
-      console.log(`${DIM}  cwd: ${this.cwd}${RESET}`);
-      console.log(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
-      console.log(`${DIM}  resume: ${this._resumeSessionId ?? "(new session)"}${RESET}\n`);
+      let promptCompleteEmitted = false;
+      const trackingEmit = (event: DaemonEvent) => {
+        if (event.type === "prompt_complete") promptCompleteEmitted = true;
+        this.emit(event);
+      };
+
+      this.writer(`\n${BLUE}${BOLD}━━━ Claude Code Session ${tag} ━━━${RESET}`);
+      this.writer(`${DIM}  cwd: ${this.cwd}${RESET}`);
+      this.writer(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
+      this.writer(`${DIM}  resume: ${this._resumeSessionId ?? "(new session)"}${RESET}\n`);
 
       const proc = spawn(this.claudeBin, args, {
         cwd: this.cwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: true,
+        windowsHide: true,
         env: { ...process.env },
       });
 
@@ -113,6 +123,10 @@ export class Session {
         this.emit({ type: "error", sessionId: this.sessionId, error: `Failed to start claude: ${err.message}` });
       });
 
+      // Collect stderr incrementally (must attach BEFORE awaiting stdout/close)
+      let stderr = "";
+      proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+
       const rl = createInterface({ input: proc.stdout! });
 
       for await (const line of rl) {
@@ -128,14 +142,14 @@ export class Session {
         // Capture session ID from init
         if (msg.type === "system" && msg.subtype === "init" && msg.session_id) {
           this._resumeSessionId = msg.session_id;
-          console.log(`${BLUE}  session: ${msg.session_id.slice(0, 8)}  model: ${msg.model ?? "?"}  mode: ${msg.permissionMode ?? "?"}${RESET}`);
+          this.writer(`${BLUE}  session: ${msg.session_id.slice(0, 8)}  model: ${msg.model ?? "?"}  mode: ${msg.permissionMode ?? "?"}${RESET}`);
         }
 
         // Render to console
         this.renderMessage(tag, msg);
 
         // Forward to IPC event system (reuses existing output forwarder)
-        forwardOutput(msg, this.sessionId, this.emit);
+        forwardOutput(msg, this.sessionId, trackingEmit);
       }
 
       // Wait for process to exit
@@ -143,18 +157,20 @@ export class Session {
         proc.on("close", (code) => resolve(code ?? 0));
       });
 
-      if (exitCode !== 0) {
-        // Collect stderr
-        let stderr = "";
-        proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-        // Give a moment for stderr to flush
-        await new Promise((r) => setTimeout(r, 100));
-        if (stderr) {
-          console.log(`${RED}  stderr: ${stderr.slice(0, 500)}${RESET}`);
-        }
+      if (exitCode !== 0 && stderr) {
+        this.writer(`${RED}  stderr: ${stderr.slice(0, 500)}${RESET}`);
       }
 
-      console.log(`\n${BLUE}${BOLD}━━━ Session ${tag} turn complete (exit=${exitCode}) ━━━${RESET}\n`);
+      this.writer(`\n${BLUE}${BOLD}━━━ Session ${tag} turn complete (exit=${exitCode}) ━━━${RESET}\n`);
+
+      // Emit prompt_complete if forwardOutput didn't (e.g. claude crashed without a result message)
+      if (!promptCompleteEmitted) {
+        this.emit({
+          type: "prompt_complete",
+          sessionId: this.sessionId,
+          stopReason: exitCode === 0 ? "end_turn" : `exit_code_${exitCode}`,
+        });
+      }
 
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -199,10 +215,10 @@ export class Session {
 
         for (const block of content) {
           if (block.type === "text" && block.text) {
-            console.log(`${BOLD}${block.text}${RESET}`);
+            this.writer(`${BOLD}${block.text}${RESET}`);
           } else if (block.type === "tool_use") {
             const inputPreview = this.formatToolInput(block.name, block.input);
-            console.log(`${YELLOW}  ▶ ${block.name}${RESET} ${DIM}${inputPreview}${RESET}`);
+            this.writer(`${YELLOW}  ▶ ${block.name}${RESET} ${DIM}${inputPreview}${RESET}`);
           }
         }
         break;
@@ -221,13 +237,13 @@ export class Session {
                 ? block.content.filter((b: any) => b.type === "text").map((b: any) => b.text).join("")
                 : "";
             if (block.is_error) {
-              console.log(`${RED}  ✗ ${text.slice(0, 300)}${RESET}`);
+              this.writer(`${RED}  ✗ ${text.slice(0, 300)}${RESET}`);
             } else if (text) {
               // Show first few lines of tool output
               const lines = text.split("\n");
               const preview = lines.slice(0, 8).join("\n");
               const more = lines.length > 8 ? `\n${DIM}  ... (${lines.length - 8} more lines)${RESET}` : "";
-              console.log(`${GREEN}  ✓ ${preview}${more}${RESET}`);
+              this.writer(`${GREEN}  ✓ ${preview}${more}${RESET}`);
             }
           }
         }
@@ -241,10 +257,10 @@ export class Session {
         const info = [turns, duration, cost].filter(Boolean).join("  ");
 
         if (msg.subtype === "success") {
-          console.log(`${GREEN}${BOLD}  ✓ Complete${RESET} ${DIM}${info}${RESET}`);
+          this.writer(`${GREEN}${BOLD}  ✓ Complete${RESET} ${DIM}${info}${RESET}`);
         } else {
           const errorText = msg.error ?? "unknown error";
-          console.log(`${RED}${BOLD}  ✗ Failed: ${errorText}${RESET} ${DIM}${info}${RESET}`);
+          this.writer(`${RED}${BOLD}  ✗ Failed: ${errorText}${RESET} ${DIM}${info}${RESET}`);
         }
         break;
       }
@@ -253,7 +269,7 @@ export class Session {
         // Show interesting system events
         if (msg.subtype === "init") return; // Already handled above
         if (msg.subtype && !["hook_started", "hook_response"].includes(msg.subtype)) {
-          console.log(`${CYAN}  [${msg.subtype}]${RESET}`);
+          this.writer(`${CYAN}  [${msg.subtype}]${RESET}`);
         }
         break;
       }

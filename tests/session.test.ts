@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { spawn } from "node:child_process";
 import { Session } from "../src/session.js";
 import { PermissionProxy } from "../src/permission-proxy.js";
 import type { DaemonEvent } from "../src/ipc-protocol.js";
@@ -147,5 +148,50 @@ describe("Session", () => {
   it("close cleans up", () => {
     session.close();
     expect(session.status).toBe("idle");
+  });
+
+  it("captures stderr output on non-zero exit", async () => {
+    mockExitCode = 1;
+    mockStdoutLines = [
+      JSON.stringify({ type: "system", subtype: "init", session_id: "x", model: "test", permissionMode: "test" }),
+    ];
+
+    const stderrChunks: Buffer[] = [Buffer.from("something went wrong")];
+    vi.mocked(spawn).mockImplementationOnce((() => {
+      const proc = {
+        pid: 12345,
+        stdin: mockStdin,
+        stdout: {
+          [Symbol.asyncIterator]: async function* () {
+            for (const line of mockStdoutLines) yield line;
+          },
+        },
+        stderr: {
+          on: vi.fn((event: string, cb: any) => {
+            if (event === "data") {
+              setTimeout(() => {
+                for (const chunk of stderrChunks) cb(chunk);
+              }, 1);
+            }
+          }),
+        },
+        on: vi.fn((event: string, cb: any) => {
+          if (event === "close") setTimeout(() => cb(mockExitCode), 20);
+          if (event === "error") spawnErrorCallback = cb;
+        }),
+        kill: vi.fn(),
+      };
+      return proc;
+    }) as any);
+
+    const events: DaemonEvent[] = [];
+    const lines: string[] = [];
+    const session = new Session("sess-1", "/tmp/project", "test", "bypassPermissions", "claude",
+      new PermissionProxy(30, () => {}), (e) => events.push(e), (line) => lines.push(line));
+
+    await session.prompt("Hello");
+
+    const stderrLine = lines.find((l) => l.includes("something went wrong"));
+    expect(stderrLine).toBeDefined();
   });
 });
