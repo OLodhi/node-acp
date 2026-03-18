@@ -6,6 +6,7 @@ import { PermissionProxy } from "./permission-proxy.js";
 import { Session } from "./session.js";
 import { EventBuffer } from "./event-buffer.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
+import { WebUI } from "./web-ui.js";
 
 const BUFFERED_TYPES = new Set(["output", "permission_request", "prompt_complete", "error", "session_closed"]);
 
@@ -15,6 +16,7 @@ export class Daemon {
   private permissionProxy: PermissionProxy;
   private sessions = new Map<string, Session>();
   private eventBuffer: EventBuffer;
+  private webUI: WebUI | null = null;
 
   constructor(private config: DaemonConfig) {
     this.eventBuffer = new EventBuffer(config.maxBufferedEvents);
@@ -27,12 +29,23 @@ export class Daemon {
       }
     };
 
-    this.sessionManager = new SessionManager(config, emit);
+    this.sessionManager = new SessionManager(config, emit, (sessionId) => {
+      const agentSession = this.sessions.get(sessionId);
+      if (agentSession) {
+        agentSession.close();
+        this.sessions.delete(sessionId);
+      }
+      this.permissionProxy.cleanupSession(sessionId);
+    });
     this.permissionProxy = new PermissionProxy(config.permissionTimeoutMinutes, emit);
 
     this.ipcServer = new IpcServer(config.ipcSocketPath, (req, send) => {
       this.handleRequest(req, send);
     });
+
+    if (config.uiEnabled) {
+      this.webUI = new WebUI(config.uiPort);
+    }
   }
 
   private broadcastAndBuffer(event: DaemonEvent): void {
@@ -40,11 +53,30 @@ export class Daemon {
       this.eventBuffer.push((event as any).sessionId, event as any);
     }
     this.ipcServer.broadcast(event);
+    // Update web UI session list on state-changing events
+    if (this.webUI && ["prompt_complete", "error", "session_closed", "output"].includes(event.type)) {
+      this.updateWebUISessions();
+    }
+  }
+
+  private updateWebUISessions(): void {
+    if (!this.webUI) return;
+    const snapshots = this.sessionManager.listSessions().map((s) => ({
+      id: s.sessionId,
+      status: s.status,
+      agent: s.agent,
+      cwd: s.cwd,
+    }));
+    this.webUI.updateSessions(snapshots);
   }
 
   async start(): Promise<void> {
     await this.ipcServer.start();
     console.log(`[acpx-node-daemon] listening on ${this.config.ipcSocketPath}`);
+    if (this.webUI) {
+      await this.webUI.start();
+      console.log(`[acpx-node-daemon] web UI at ${this.webUI.url}`);
+    }
   }
 
   async stop(): Promise<void> {
@@ -61,6 +93,7 @@ export class Daemon {
       this.sessionManager.removeSession(session.sessionId);
     }
     this.sessions.clear();
+    if (this.webUI) await this.webUI.stop();
     await this.ipcServer.stop();
     console.log("[acpx-node-daemon] stopped");
   }
@@ -103,6 +136,18 @@ export class Daemon {
 
       const emit = (event: DaemonEvent) => this.broadcastAndBuffer(event);
 
+      // Dual writer: terminal + web UI
+      const sessionId = req.sessionId;
+      const hasWebUI = !!this.webUI;
+      console.log(`[daemon] creating session ${sessionId} with webUI=${hasWebUI}`);
+      const webUI = this.webUI;
+      const writer = (line: string) => {
+        console.log(line);
+        if (webUI) {
+          webUI.pushLine(sessionId, line);
+        }
+      };
+
       const agentSession = new Session(
         req.sessionId,
         req.cwd,
@@ -110,11 +155,13 @@ export class Daemon {
         req.permissionMode,
         this.config.claudeBin,
         this.permissionProxy,
-        emit
+        emit,
+        writer
       );
       this.sessions.set(req.sessionId, agentSession);
 
       this.sessionManager.setStatus(req.sessionId, "idle");
+      this.updateWebUISessions();
 
       send({
         type: "spawn_result",
@@ -149,11 +196,13 @@ export class Daemon {
     }
 
     this.sessionManager.setStatus(req.sessionId, "busy");
+    this.updateWebUISessions();
     send({ type: "prompt_accepted", sessionId: req.sessionId });
 
     // Run prompt in background — output streams via broadcastAndBuffer
     agentSession.prompt(req.prompt).then(() => {
       this.sessionManager.setStatus(req.sessionId, "idle");
+      this.updateWebUISessions();
     }).catch((err) => {
       this.broadcastAndBuffer({
         type: "error",

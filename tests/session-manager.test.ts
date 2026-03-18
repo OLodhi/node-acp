@@ -76,4 +76,25 @@ describe("SessionManager", () => {
     });
     expect(manager.listSessions()).toHaveLength(2);
   });
+
+  it("calls onSessionExpired callback on TTL expiry", () => {
+    vi.useFakeTimers();
+    const onExpired = vi.fn();
+    const config = loadConfig({ maxConcurrentSessions: 2 });
+    const events: any[] = [];
+    const mgr = new SessionManager(config, (e) => events.push(e), onExpired);
+
+    mgr.registerSession("s1", {
+      agent: "claude", cwd: "/tmp", model: "claude-opus-4-6",
+      permissionMode: "default", ttlMinutes: 1,
+    });
+
+    vi.advanceTimersByTime(60_001);
+
+    expect(onExpired).toHaveBeenCalledWith("s1");
+    expect(mgr.getSession("s1")).toBeUndefined();
+    expect(events.some((e) => e.type === "session_closed" && e.reason === "ttl_expired")).toBe(true);
+
+    vi.useRealTimers();
+  });
 });

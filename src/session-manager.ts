@@ -23,7 +23,8 @@ export class SessionManager {
 
   constructor(
     private config: DaemonConfig,
-    private emit: (event: DaemonEvent) => void
+    private emit: (event: DaemonEvent) => void,
+    private onSessionExpired?: (sessionId: string) => void,
   ) {}
 
   registerSession(sessionId: string, info: SessionInfo): ManagedSession {
@@ -91,6 +92,7 @@ export class SessionManager {
         reason: "ttl_expired",
       });
       this.sessions.delete(sessionId);
+      this.onSessionExpired?.(sessionId);
     }, session.ttlMinutes * 60 * 1000);
   }
 }
