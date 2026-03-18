@@ -141,7 +141,7 @@ export class PersistentSession implements ISession {
     const proc = spawn(this.config.claudeBin, args, {
       cwd: this.config.cwd,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: false,
+      shell: true,
       windowsHide: true,
       env: { ...process.env },
     });

@@ -271,7 +271,7 @@ describe("PersistentSession", () => {
     expect(mockProc.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
-  it("uses shell: false", async () => {
+  it("uses shell: true with windowsHide: true", async () => {
     const promptPromise = session.prompt("Hello");
     await tick();
 
@@ -287,6 +287,7 @@ describe("PersistentSession", () => {
 
     const spawnCall = vi.mocked(spawn).mock.calls[0];
     const options = spawnCall[2] as any;
-    expect(options.shell).toBe(false);
+    expect(options.shell).toBe(true);
+    expect(options.windowsHide).toBe(true);
   });
 });
