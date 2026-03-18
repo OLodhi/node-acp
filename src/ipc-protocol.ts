@@ -8,6 +8,7 @@ export interface SpawnRequest {
   model: string;
   permissionMode: string;
   timeoutMinutes: number;
+  sessionMode?: "persistent" | "ephemeral";
 }
 
 export interface PromptRequest {

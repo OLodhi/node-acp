@@ -80,7 +80,7 @@ export class SessionManager {
     this.sessions.delete(sessionId);
   }
 
-  private resetTtl(sessionId: string): void {
+  resetTtl(sessionId: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) return;
     if (session.ttlTimer) clearTimeout(session.ttlTimer);

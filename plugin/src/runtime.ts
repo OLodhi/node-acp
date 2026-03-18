@@ -59,6 +59,7 @@ export class AcpxRemoteRuntime {
       ...this.config.daemonBin, "spawn",
       "--session-id", sessionId,
       "--cwd", cwd,
+      "--session-mode", this.config.sessionMode,
     ]);
 
     if (!result.success) {

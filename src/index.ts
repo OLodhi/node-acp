@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, openSync, closeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { spawn as spawnChild } from "node:child_process";
@@ -24,7 +24,7 @@ if (!command || command === "--help" || command === "-h") {
   console.log(`acpx-node-daemon v${VERSION}
 
 Usage:
-  acpx-node-daemon start [--daemon]                               Start the daemon
+  acpx-node-daemon start [--daemon] [--ui] [--port <n>]            Start the daemon
   acpx-node-daemon stop                                            Stop the daemon
   acpx-node-daemon spawn --cwd <path> [--session-id <uuid>]       Spawn a session
   acpx-node-daemon prompt <sessionId> [--text-b64 <b64>] [--async] [text...]  Send a prompt
@@ -34,17 +34,24 @@ Usage:
   acpx-node-daemon cancel <sessionId>                              Cancel current turn
   acpx-node-daemon close <sessionId>                               Close a session
   acpx-node-daemon permission-response <sid> <pid> <true|false>    Respond to permission
+  acpx-node-daemon logs [--tail <n>]                               Show daemon log (last n lines)
   acpx-node-daemon --version                                       Print version
 
 Environment:
   ACPX_MODEL              Override default model
   ACPX_PERMISSION_MODE    Override permission mode
   ACPX_SOCKET_PATH        Override IPC socket path
-  ACPX_CLAUDE_BIN         Override claude binary name/path`);
+  ACPX_CLAUDE_BIN         Override claude binary name/path
+  ACPX_UI_PORT            Override web UI port (default: 19100)`);
   process.exit(0);
 }
 
-const config = loadConfig({});
+const uiFlag = args.includes("--ui");
+const uiPort = getFlag(args, "--port");
+const config = loadConfig({
+  uiEnabled: uiFlag || undefined,
+  uiPort: uiPort ? parseInt(uiPort, 10) : undefined,
+});
 const pidFile = getFlag(args, "--pid-file") ?? join(homedir(), ".acpx-node-daemon.pid");
 const logFile = getFlag(args, "--log-file") ?? join(homedir(), ".acpx-node-daemon.log");
 
@@ -52,18 +59,35 @@ if (command === "start") {
   const isDaemon = args.includes("--daemon") || args.includes("-d");
 
   if (isDaemon) {
-    // Spawn self detached and exit
+    // Clean up stale PID file from a previously crashed daemon
+    if (existsSync(pidFile)) {
+      const oldPid = parseInt(readFileSync(pidFile, "utf-8").trim(), 10);
+      if (!isNaN(oldPid)) {
+        try {
+          process.kill(oldPid, 0); // Check if process exists (signal 0 = no-op)
+          console.log(JSON.stringify({ already_running: true, pid: oldPid }));
+          process.exit(0);
+        } catch {
+          // Process doesn't exist — stale PID file, clean it up
+          try { unlinkSync(pidFile); } catch {}
+        }
+      }
+    }
+
+    // Spawn self detached, redirecting output to log file for diagnostics
     const selfArgs = process.argv.slice(1).filter((a) => a !== "--daemon" && a !== "-d");
+    const logFd = openSync(logFile, "a");
     const child = spawnChild(process.execPath, selfArgs, {
       detached: true,
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", logFd, logFd],
       env: { ...process.env },
     });
     child.unref();
+    closeSync(logFd);
 
     if (child.pid) {
       writeFileSync(pidFile, String(child.pid));
-      console.log(JSON.stringify({ pid: child.pid, pidFile, socketPath: config.ipcSocketPath }));
+      console.log(JSON.stringify({ pid: child.pid, pidFile, socketPath: config.ipcSocketPath, logFile }));
     }
     process.exit(0);
   }
@@ -105,6 +129,17 @@ if (command === "start") {
     } else {
       console.error(`Failed to stop daemon (pid ${pid}): ${err.message}`);
     }
+    process.exit(1);
+  }
+} else if (command === "logs") {
+  // Read daemon log file (no IPC needed)
+  const tailN = parseInt(getFlag(args, "--tail") ?? "50", 10);
+  try {
+    const content = readFileSync(logFile, "utf-8");
+    const lines = content.split("\n");
+    console.log(lines.slice(-tailN).join("\n"));
+  } catch {
+    console.error(`No log file at ${logFile}`);
     process.exit(1);
   }
 } else {
@@ -188,6 +223,7 @@ if (command === "start") {
           model: getFlag(args, "--model") ?? config.defaultModel,
           permissionMode: config.defaultPermissionMode,
           timeoutMinutes: config.defaultTtlMinutes,
+          sessionMode: (getFlag(args, "--session-mode") as any) ?? config.sessionMode,
         });
         break;
       }

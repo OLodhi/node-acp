@@ -39,6 +39,22 @@
         "type": "number",
         "default": 4,
         "description": "Maximum concurrent sessions per node"
+      },
+      "daemonBin": {
+        "type": "string",
+        "default": "acpx-node-daemon",
+        "description": "Daemon binary command. Use a full path if the binary is not in the system.run PATH (e.g. 'C:/Users/me/nodejs/node.exe C:/Projects/node-acp/dist/index.js')"
+      },
+      "daemonStartArgs": {
+        "type": "string",
+        "default": "--ui",
+        "description": "Extra args passed to the daemon start command (space-separated). Default enables the web UI."
+      },
+      "sessionMode": {
+        "type": "string",
+        "enum": ["persistent", "ephemeral"],
+        "default": "persistent",
+        "description": "Session mode: 'persistent' keeps the claude process alive between prompts, 'ephemeral' spawns a new process per prompt"
       }
     },
     "required": ["defaultNode"]
@@ -50,7 +66,10 @@
     "pollIntervalMs": { "label": "Poll Interval (ms)", "advanced": true },
     "autoDeployDaemon": { "label": "Auto-deploy daemon", "help": "Automatically install the daemon on nodes when not found" },
     "sessionTimeoutMinutes": { "label": "Session Timeout (min)", "advanced": true },
-    "maxConcurrentSessions": { "label": "Max Sessions", "advanced": true }
+    "maxConcurrentSessions": { "label": "Max Sessions", "advanced": true },
+    "daemonBin": { "label": "Daemon Binary", "help": "Full path to daemon binary or 'node /path/to/dist/index.js'. Needed when npm global bin is not in the system.run PATH (e.g. fnm/nvm users).", "advanced": true },
+    "daemonStartArgs": { "label": "Daemon Start Args", "help": "Extra flags for daemon start (e.g. '--ui --port 8080')", "advanced": true },
+    "sessionMode": { "label": "Session Mode", "help": "'persistent' keeps claude alive between prompts (faster follow-ups), 'ephemeral' spawns fresh per prompt", "advanced": true }
   },
   "skills": ["skills/acp-node-router"]
 }
