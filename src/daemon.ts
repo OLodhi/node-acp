@@ -4,7 +4,8 @@ import { IpcServer } from "./ipc-server.js";
 import { SessionManager } from "./session-manager.js";
 import { PermissionProxy } from "./permission-proxy.js";
 import { Session } from "./session.js";
-import type { ISession } from "./session-interface.js";
+import { PersistentSession } from "./persistent-session.js";
+import type { ISession, SessionConfig } from "./session-interface.js";
 import { EventBuffer } from "./event-buffer.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
 import { WebUI } from "./web-ui.js";
@@ -164,17 +165,35 @@ export class Daemon {
         }
       };
 
-      const agentSession = new Session(
-        req.sessionId,
-        req.cwd,
-        req.model,
-        req.permissionMode,
-        this.config.claudeBin,
-        this.permissionProxy,
-        emit,
-        writer,
-        this.pidRegistry
-      );
+      const mode = req.sessionMode ?? this.config.sessionMode;
+      let agentSession;
+      if (mode === "persistent") {
+        const sessionConfig: SessionConfig = {
+          sessionId: req.sessionId,
+          cwd: req.cwd,
+          model: req.model,
+          permissionMode: req.permissionMode,
+          claudeBin: this.config.claudeBin,
+          permissionProxy: this.permissionProxy,
+          emit,
+          writer,
+          pidRegistry: this.pidRegistry,
+          onActivity: () => this.sessionManager.resetTtl(req.sessionId),
+        };
+        agentSession = new PersistentSession(sessionConfig, this.config.processIdleMinutes);
+      } else {
+        agentSession = new Session(
+          req.sessionId,
+          req.cwd,
+          req.model,
+          req.permissionMode,
+          this.config.claudeBin,
+          this.permissionProxy,
+          emit,
+          writer,
+          this.pidRegistry
+        );
+      }
       this.sessions.set(req.sessionId, agentSession);
 
       this.sessionManager.setStatus(req.sessionId, "idle");
