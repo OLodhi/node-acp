@@ -57,14 +57,6 @@ export class PersistentSession implements ISession {
       throw new Error(`Session ${this.sessionId} is busy`);
     }
 
-    // Wait for any in-flight spawn
-    if (this._spawnPromise) await this._spawnPromise;
-
-    // Spawn if no process
-    if (!this._proc) {
-      await this.spawnProcess();
-    }
-
     // Clear idle timer
     this.clearIdleTimer();
 
@@ -77,6 +69,15 @@ export class PersistentSession implements ISession {
     writer(`${DIM}  cwd: ${this.config.cwd}${RESET}`);
     writer(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
     writer(`${DIM}  mode: persistent  resume: ${this._claudeSessionId ?? "(new)"}${RESET}\n`);
+
+    // Spawn if no process — write user message immediately (don't wait for init,
+    // as the process may not emit init until stdin has data)
+    if (!this._proc) {
+      this.spawnProcess();
+    } else if (this._spawnPromise) {
+      // Process is still spawning from a previous call — wait for it
+      await this._spawnPromise;
+    }
 
     // Write prompt as NDJSON (format verified against claude --input-format stream-json)
     const msg = JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n";
@@ -118,7 +119,7 @@ export class PersistentSession implements ISession {
 
   // --- Private methods ---
 
-  private spawnProcess(): Promise<void> {
+  private spawnProcess(): void {
     const args = [
       "--input-format", "stream-json",
       "--output-format", "stream-json",
@@ -179,10 +180,8 @@ export class PersistentSession implements ISession {
       this.handleProcessExit(code ?? 0);
     });
 
-    // Start background reader
+    // Start background reader (fire and forget — runs for process lifetime)
     this.runBackgroundReader();
-
-    return this._spawnPromise;
   }
 
   private async runBackgroundReader(): Promise<void> {
