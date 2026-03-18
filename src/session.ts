@@ -4,6 +4,7 @@ import type { PermissionProxy } from "./permission-proxy.js";
 import type { DaemonEvent } from "./ipc-protocol.js";
 import { forwardOutput } from "./output-forwarder.js";
 import type { ChildPidRegistry } from "./child-pid-registry.js";
+import type { ISession } from "./session-interface.js";
 
 // ANSI color helpers
 const RESET = "\x1b[0m";
@@ -16,7 +17,7 @@ const RED = "\x1b[31m";
 const CYAN = "\x1b[36m";
 const MAGENTA = "\x1b[35m";
 
-export class Session {
+export class Session implements ISession {
   readonly sessionId: string;
 
   private _status: "idle" | "busy" = "idle";

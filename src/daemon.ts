@@ -4,6 +4,7 @@ import { IpcServer } from "./ipc-server.js";
 import { SessionManager } from "./session-manager.js";
 import { PermissionProxy } from "./permission-proxy.js";
 import { Session } from "./session.js";
+import type { ISession } from "./session-interface.js";
 import { EventBuffer } from "./event-buffer.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
 import { WebUI } from "./web-ui.js";
@@ -17,7 +18,7 @@ export class Daemon {
   private ipcServer: IpcServer;
   private sessionManager: SessionManager;
   private permissionProxy: PermissionProxy;
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, ISession>();
   private eventBuffer: EventBuffer;
   private webUI: WebUI | null = null;
   private pidRegistry: ChildPidRegistry;
