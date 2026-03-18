@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { PermissionProxy } from "./permission-proxy.js";
 import type { DaemonEvent } from "./ipc-protocol.js";
 import { forwardOutput } from "./output-forwarder.js";
+import type { ChildPidRegistry } from "./child-pid-registry.js";
 
 // ANSI color helpers
 const RESET = "\x1b[0m";
@@ -30,6 +31,7 @@ export class Session {
   private permissionProxy: PermissionProxy;
   private emit: (event: DaemonEvent) => void;
   private writer: (line: string) => void;
+  private pidRegistry?: ChildPidRegistry;
 
   constructor(
     sessionId: string,
@@ -39,7 +41,8 @@ export class Session {
     claudeBin: string,
     permissionProxy: PermissionProxy,
     emit: (event: DaemonEvent) => void,
-    writer?: (line: string) => void
+    writer?: (line: string) => void,
+    pidRegistry?: ChildPidRegistry,
   ) {
     this.sessionId = sessionId;
     this.cwd = cwd;
@@ -49,6 +52,7 @@ export class Session {
     this.permissionProxy = permissionProxy;
     this.emit = emit;
     this.writer = writer ?? ((line) => console.log(line));
+    this.pidRegistry = pidRegistry;
   }
 
   get status(): "idle" | "busy" {
@@ -112,6 +116,7 @@ export class Session {
 
       this.currentProcess = proc;
       this._pid = proc.pid;
+      if (proc.pid) this.pidRegistry?.register(proc.pid);
 
       // Pipe prompt text to stdin, then close it so claude reads the prompt
       proc.stdin!.write(text);
@@ -181,6 +186,7 @@ export class Session {
         error: errorMsg,
       });
     } finally {
+      if (this._pid) this.pidRegistry?.unregister(this._pid);
       this._status = "idle";
       this.currentProcess = null;
     }

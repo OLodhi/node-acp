@@ -7,6 +7,9 @@ import { Session } from "./session.js";
 import { EventBuffer } from "./event-buffer.js";
 import type { DaemonRequest, DaemonEvent } from "./ipc-protocol.js";
 import { WebUI } from "./web-ui.js";
+import { ChildPidRegistry } from "./child-pid-registry.js";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 const BUFFERED_TYPES = new Set(["output", "permission_request", "prompt_complete", "error", "session_closed"]);
 
@@ -17,6 +20,7 @@ export class Daemon {
   private sessions = new Map<string, Session>();
   private eventBuffer: EventBuffer;
   private webUI: WebUI | null = null;
+  private pidRegistry: ChildPidRegistry;
 
   constructor(private config: DaemonConfig) {
     this.eventBuffer = new EventBuffer(config.maxBufferedEvents);
@@ -49,6 +53,8 @@ export class Daemon {
     if (config.uiEnabled) {
       this.webUI = new WebUI(config.uiPort);
     }
+
+    this.pidRegistry = new ChildPidRegistry(join(homedir(), ".acpx-node-daemon-children.json"));
   }
 
   private broadcastAndBuffer(event: DaemonEvent): void {
@@ -74,6 +80,12 @@ export class Daemon {
   }
 
   async start(): Promise<void> {
+    // Kill orphaned claude processes from a previous crash
+    for (const pid of this.pidRegistry.list()) {
+      try { process.kill(pid, "SIGTERM"); } catch {}
+    }
+    this.pidRegistry.clear();
+
     await this.ipcServer.start();
     console.log(`[acpx-node-daemon] listening on ${this.config.ipcSocketPath}`);
     if (this.webUI) {
@@ -159,7 +171,8 @@ export class Daemon {
         this.config.claudeBin,
         this.permissionProxy,
         emit,
-        writer
+        writer,
+        this.pidRegistry
       );
       this.sessions.set(req.sessionId, agentSession);
 
