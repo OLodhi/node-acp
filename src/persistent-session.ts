@@ -78,8 +78,8 @@ export class PersistentSession implements ISession {
     writer(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
     writer(`${DIM}  mode: persistent  resume: ${this._claudeSessionId ?? "(new)"}${RESET}\n`);
 
-    // Write prompt as NDJSON
-    const msg = JSON.stringify({ type: "user_message", content: text }) + "\n";
+    // Write prompt as NDJSON (format verified against claude --input-format stream-json)
+    const msg = JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n";
     this._proc!.stdin!.write(msg);
 
     // Wait for result message from background reader
