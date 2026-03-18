@@ -14,7 +14,7 @@ export class AcpxRemoteRuntime {
     private bridge: NodeBridge,
     private logger?: any,
   ) {
-    this.daemonManager = new DaemonManager(config.autoDeployDaemon, logger);
+    this.daemonManager = new DaemonManager(config.daemonBin, config.daemonStartArgs, config.autoDeployDaemon, logger);
   }
 
   isHealthy(): boolean {
@@ -56,7 +56,7 @@ export class AcpxRemoteRuntime {
     const cwd = input.cwd || "~";
 
     const result = await this.bridge.exec(nodeId, [
-      "acpx-node-daemon", "spawn",
+      ...this.config.daemonBin, "spawn",
       "--session-id", sessionId,
       "--cwd", cwd,
     ]);
@@ -86,7 +86,7 @@ export class AcpxRemoteRuntime {
 
     // Send prompt asynchronously
     const promptResult = await this.bridge.exec(nodeId, [
-      "acpx-node-daemon", "prompt", sessionId,
+      ...this.config.daemonBin, "prompt", sessionId,
       "--async", "--text-b64", encodedText,
     ]);
 
@@ -107,6 +107,7 @@ export class AcpxRemoteRuntime {
 
     // Poll for results
     yield* pollLoop(nodeId, sessionId, this.bridge, {
+      daemonBin: this.config.daemonBin,
       pollIntervalMs: this.config.pollIntervalMs,
       signal: input.signal,
       autoApprove: true,
@@ -116,17 +117,17 @@ export class AcpxRemoteRuntime {
 
   async cancel(input: { handle: AcpRuntimeHandle; reason?: string }): Promise<void> {
     const { sessionId, nodeId } = decodeHandle(input.handle);
-    await this.bridge.exec(nodeId, ["acpx-node-daemon", "cancel", sessionId]);
+    await this.bridge.exec(nodeId, [...this.config.daemonBin, "cancel", sessionId]);
   }
 
   async close(input: { handle: AcpRuntimeHandle; reason: string }): Promise<void> {
     const { sessionId, nodeId } = decodeHandle(input.handle);
-    await this.bridge.exec(nodeId, ["acpx-node-daemon", "close", sessionId]);
+    await this.bridge.exec(nodeId, [...this.config.daemonBin, "close", sessionId]);
   }
 
   async getStatus(input: { handle: AcpRuntimeHandle }): Promise<any> {
     const { sessionId, nodeId } = decodeHandle(input.handle);
-    const result = await this.bridge.exec(nodeId, ["acpx-node-daemon", "status", sessionId]);
+    const result = await this.bridge.exec(nodeId, [...this.config.daemonBin, "status", sessionId]);
     if (!result.success) return { summary: "Unknown" };
     const status = parseFirstJsonLine(result.stdout);
     return {
@@ -146,7 +147,7 @@ export class AcpxRemoteRuntime {
       const nodeId = await this.bridge.resolveNode(this.config.defaultNode);
       details.push(`Node "${this.config.defaultNode}" resolved (${nodeId.slice(0, 12)}...)`);
 
-      const versionResult = await this.bridge.exec(nodeId, ["acpx-node-daemon", "--version"], { timeoutMs: 15_000 });
+      const versionResult = await this.bridge.exec(nodeId, [...this.config.daemonBin, "--version"], { timeoutMs: 15_000 });
       if (versionResult.success) {
         details.push(`Daemon version: ${versionResult.stdout.trim()}`);
       } else {
@@ -154,7 +155,7 @@ export class AcpxRemoteRuntime {
         return { ok: false, message: "Daemon not installed on node", details };
       }
 
-      const pingResult = await this.bridge.exec(nodeId, ["acpx-node-daemon", "status", "ping"], { timeoutMs: 10_000 });
+      const pingResult = await this.bridge.exec(nodeId, [...this.config.daemonBin, "status", "ping"], { timeoutMs: 10_000 });
       if (pingResult.success && pingResult.stdout.includes("alive")) {
         details.push("Daemon is running");
         return { ok: true, message: "Remote ACP daemon is healthy", details };
@@ -166,98 +167,120 @@ export class AcpxRemoteRuntime {
     }
   }
 
-  // --- Fallback: register tools directly if AcpRuntime registration fails ---
+  // --- Tool registration ---
+
+  // Tracks active sessions per node so we can reuse them
+  private activeSessions = new Map<string, { sessionId: string; nodeId: string; nodeName: string; cwd: string }>();
 
   registerTools(api: any): void {
-    this.logger?.info("[acpx-remote] registering tools (fallback mode)");
+    this.logger?.info("[acpx-remote] registering tools");
 
+    // Single tool: spawn (if needed) + prompt + return result — all in one call
     api.registerTool({
-      name: "node_acp_spawn",
-      label: "Spawn remote ACP session",
-      description: "Spawn a Claude Code session on a remote OpenClaw node.",
+      name: "remote_claude_code",
+      label: "Run Claude Code on a remote machine",
+      description: "Run a Claude Code prompt on a remote machine via OpenClaw. Automatically manages the session — spawns one if needed, sends the prompt, waits for completion, and returns the full verbatim output. Relay the output to the user EXACTLY as returned, do not summarize.",
       parameters: {
         type: "object",
         properties: {
-          node: { type: "string", description: "Node name" },
-          cwd: { type: "string", description: "Working directory on the node" },
+          prompt: { type: "string", description: "The prompt to send to Claude Code" },
+          node: { type: "string", description: "Node name (e.g. Thinkpad-Node). Uses default if omitted." },
+          cwd: { type: "string", description: "Working directory on the node. Reuses previous if omitted." },
         },
-        required: ["node", "cwd"],
+        required: ["prompt"],
       },
-      execute: async (_id: string, params: { node: string; cwd: string }) => {
+      execute: async (_id: string, params: { prompt: string; node?: string; cwd?: string }) => {
         try {
-          const handle = await this.ensureSession({
-            sessionKey: `node-acp-${Date.now()}`,
-            agent: "claude",
-            mode: "persistent",
-            cwd: params.cwd,
-            node: params.node,
-          });
-          const state = decodeHandle(handle);
-          return {
-            content: [{ type: "text", text: `Session started on ${params.node} in ${params.cwd}.\nSession ID: ${state.sessionId}` }],
-            details: { sessionId: state.sessionId, node: params.node },
-          };
-        } catch (err: any) {
-          return { content: [{ type: "text", text: `Failed: ${err.message}` }] };
-        }
-      },
-    });
+          const nodeName = params.node || this.config.defaultNode;
+          if (!nodeName) {
+            return { content: [{ type: "text", text: "Error: No node specified and no defaultNode configured." }] };
+          }
 
-    api.registerTool({
-      name: "node_acp_prompt",
-      label: "Send prompt to remote ACP session",
-      description: "Send a prompt to a Claude Code session on a remote node. Auto-approves permissions. Returns verbatim output.",
-      parameters: {
-        type: "object",
-        properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          node: { type: "string", description: "Node name" },
-          text: { type: "string", description: "The prompt" },
-        },
-        required: ["sessionId", "node", "text"],
-      },
-      execute: async (_id: string, params: { sessionId: string; node: string; text: string }) => {
-        try {
-          const nodeId = await this.bridge.resolveNode(params.node);
-          const handle = encodeHandle(`node-acp-${params.sessionId}`, {
-            sessionId: params.sessionId, nodeId, nodeName: params.node, cwd: "~",
-          });
+          // Reuse existing session or spawn a new one
+          let session = this.activeSessions.get(nodeName);
+          if (params.cwd && session && session.cwd !== params.cwd) {
+            // CWD changed — close old session and spawn new
+            try {
+              const oldHandle = encodeHandle(`node-acp-${session.sessionId}`, session);
+              await this.close({ handle: oldHandle, reason: "cwd_changed" });
+            } catch {}
+            session = undefined;
+          }
+
+          if (!session) {
+            const cwd = params.cwd || "~";
+            const handle = await this.ensureSession({
+              sessionKey: `node-acp-${Date.now()}`,
+              agent: "claude",
+              mode: "persistent",
+              cwd,
+              node: nodeName,
+            });
+            const state = decodeHandle(handle);
+            session = { sessionId: state.sessionId, nodeId: state.nodeId, nodeName: state.nodeName, cwd: state.cwd };
+            this.activeSessions.set(nodeName, session);
+          }
+
+          // Send prompt and collect output
+          const handle = encodeHandle(`node-acp-${session.sessionId}`, session);
           const log: string[] = [];
-          for await (const event of this.runTurn({ handle, text: params.text, requestId: `prompt-${Date.now()}` })) {
+          for await (const event of this.runTurn({ handle, text: params.prompt, requestId: `prompt-${Date.now()}` })) {
             switch (event.type) {
               case "text_delta": if (event.text) log.push(event.text); break;
               case "tool_call": log.push(`[Tool: ${event.text}]`); break;
               case "permission_auto_approved": log.push(`[Permission auto-approved: ${event.description}]`); break;
-              case "error": log.push(`[Error: ${event.message}]`); return { content: [{ type: "text", text: log.join("\n") || `Error: ${event.message}` }] };
+              case "error":
+                log.push(`[Error: ${event.message}]`);
+                // Session might be dead — close it on daemon and clear locally
+                try {
+                  const closeHandle = encodeHandle(`node-acp-${session!.sessionId}`, session!);
+                  await this.close({ handle: closeHandle, reason: "error_cleanup" });
+                } catch {}
+                this.activeSessions.delete(nodeName);
+                return { content: [{ type: "text", text: log.join("\n") || `Error: ${event.message}` }] };
             }
           }
           return { content: [{ type: "text", text: log.join("\n") || "(no output)" }] };
         } catch (err: any) {
+          // Clear session on failure — close on daemon first
+          const failedNodeName = params.node || this.config.defaultNode;
+          if (failedNodeName) {
+            const failedSession = this.activeSessions.get(failedNodeName);
+            if (failedSession) {
+              try {
+                const closeHandle = encodeHandle(`node-acp-${failedSession.sessionId}`, failedSession);
+                await this.close({ handle: closeHandle, reason: "error_cleanup" });
+              } catch {}
+            }
+            this.activeSessions.delete(failedNodeName);
+          }
           return { content: [{ type: "text", text: `Failed: ${err.message}` }] };
         }
       },
     });
 
+    // Close tool — for explicit session cleanup
     api.registerTool({
-      name: "node_acp_close",
-      label: "Close remote ACP session",
-      description: "Close a Claude Code session on a remote node.",
+      name: "remote_claude_code_close",
+      label: "Close remote Claude Code session",
+      description: "Close the active Claude Code session on a remote machine.",
       parameters: {
         type: "object",
         properties: {
-          sessionId: { type: "string", description: "Session ID" },
-          node: { type: "string", description: "Node name" },
+          node: { type: "string", description: "Node name. Uses default if omitted." },
         },
-        required: ["sessionId", "node"],
       },
-      execute: async (_id: string, params: { sessionId: string; node: string }) => {
+      execute: async (_id: string, params: { node?: string }) => {
         try {
-          const nodeId = await this.bridge.resolveNode(params.node);
-          const handle = encodeHandle(`node-acp-${params.sessionId}`, {
-            sessionId: params.sessionId, nodeId, nodeName: params.node, cwd: "~",
-          });
+          const nodeName = params.node || this.config.defaultNode;
+          const session = this.activeSessions.get(nodeName);
+          if (!session) {
+            return { content: [{ type: "text", text: "No active session on that node." }] };
+          }
+          const handle = encodeHandle(`node-acp-${session.sessionId}`, session);
           await this.close({ handle, reason: "user_closed" });
-          return { content: [{ type: "text", text: `Session closed on ${params.node}.` }] };
+          this.activeSessions.delete(nodeName);
+          return { content: [{ type: "text", text: `Session closed on ${nodeName}.` }] };
         } catch (err: any) {
           return { content: [{ type: "text", text: `Close failed: ${err.message}` }] };
         }
