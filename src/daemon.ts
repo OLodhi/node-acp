@@ -36,6 +36,9 @@ export class Daemon {
         this.sessions.delete(sessionId);
       }
       this.permissionProxy.cleanupSession(sessionId);
+      if (this.webUI) {
+        this.webUI.removeSession(sessionId);
+      }
     });
     this.permissionProxy = new PermissionProxy(config.permissionTimeoutMinutes, emit);
 
@@ -245,6 +248,9 @@ export class Daemon {
       reason: "user_closed",
     });
     this.eventBuffer.markDraining(req.sessionId);
+    if (this.webUI) {
+      this.webUI.removeSession(req.sessionId);
+    }
   }
 
   private handleStatus(req: DaemonRequest & { type: "status" }, send: (event: DaemonEvent) => void): void {
