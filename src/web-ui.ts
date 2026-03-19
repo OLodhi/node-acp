@@ -79,6 +79,14 @@ export class WebUI {
 
   removeSession(sessionId: string): void {
     this.lineBuffers.delete(sessionId);
+    // Remove from session list and push update to all SSE clients
+    this.sessionList = this.sessionList.filter((s) => s.id !== sessionId);
+    const data = JSON.stringify({ type: "sessions", sessions: this.sessionList });
+    for (const client of this.sseClients) {
+      try {
+        client.write(`data: ${data}\n\n`);
+      } catch {}
+    }
   }
 
   updateSessions(sessions: SessionSnapshot[]): void {
