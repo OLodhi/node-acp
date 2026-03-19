@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { homedir } from "node:os";
 import { createInterface, type Interface as ReadlineInterface } from "node:readline";
 import type { ISession, SessionConfig } from "./session-interface.js";
 import type { DaemonEvent } from "./ipc-protocol.js";
@@ -140,7 +141,7 @@ export class PersistentSession implements ISession {
     }
 
     // Resolve ~ to actual home directory (~ is not valid on Windows)
-    const cwd = this.config.cwd === "~" ? require("node:os").homedir() : this.config.cwd;
+    const cwd = this.config.cwd === "~" ? homedir() : this.config.cwd;
 
     const proc = spawn(this.config.claudeBin, args, {
       cwd,

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { homedir } from "node:os";
 import { createInterface } from "node:readline";
 import type { PermissionProxy } from "./permission-proxy.js";
 import type { DaemonEvent } from "./ipc-protocol.js";
@@ -108,7 +109,7 @@ export class Session implements ISession {
       this.writer(`${DIM}  resume: ${this._resumeSessionId ?? "(new session)"}${RESET}\n`);
 
       // Resolve ~ to actual home directory (~ is not valid on Windows)
-      const cwd = this.cwd === "~" ? require("node:os").homedir() : this.cwd;
+      const cwd = this.cwd === "~" ? homedir() : this.cwd;
 
       const proc = spawn(this.claudeBin, args, {
         cwd,
