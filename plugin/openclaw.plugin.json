@@ -71,5 +71,5 @@
     "daemonStartArgs": { "label": "Daemon Start Args", "help": "Extra flags for daemon start (e.g. '--ui --port 8080')", "advanced": true },
     "sessionMode": { "label": "Session Mode", "help": "'persistent' keeps claude alive between prompts (faster follow-ups), 'ephemeral' spawns fresh per prompt", "advanced": true }
   },
-  "skills": ["skills/acp-node-router"]
+  "skills": ["skills/acp-remote-router"]
 }
