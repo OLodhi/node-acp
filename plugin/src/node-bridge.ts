@@ -12,9 +12,13 @@ export class NodeBridge {
   private callGateway: any;
   private token: string;
   private nodeIdCache = new Map<string, string>();
+  private logger?: any;
+  private nodePlatform: "win32" | "posix";
 
-  constructor(openclawConfig: any) {
+  constructor(openclawConfig: any, logger?: any, nodePlatform?: string) {
     this.token = openclawConfig?.gateway?.auth?.token ?? "";
+    this.logger = logger;
+    this.nodePlatform = nodePlatform === "posix" ? "posix" : "win32"; // default win32 for now
     this.callGateway = this.resolveCallGateway();
   }
 
@@ -77,6 +81,22 @@ export class NodeBridge {
     );
   }
 
+  /**
+   * Wrap a command argv for the target node platform's shell,
+   * but ONLY for POSIX nodes. On Windows, system.run already uses
+   * windowsHide:true — wrapping in cmd.exe causes a visible console flash.
+   * Instead, we pass argv directly and rely on the daemonBin config
+   * providing a resolvable executable (e.g. "node path/to/script.js").
+   */
+  private wrapForShell(argv: string[]): string[] {
+    if (this.nodePlatform !== "win32") {
+      // POSIX: use login shell for full PATH resolution
+      return ["/bin/sh", "-lc", argv.join(" ")];
+    }
+    // Windows: pass argv directly — system.run spawns with windowsHide:true
+    return argv;
+  }
+
   async resolveNode(displayName: string): Promise<string> {
     const cached = this.nodeIdCache.get(displayName);
     if (cached) return cached;
@@ -86,7 +106,7 @@ export class NodeBridge {
       method: "node.list",
       params: {},
       timeoutMs: 10_000,
-      clientName: "acpx-remote",
+      clientName: "gateway-client",
       mode: "backend",
       scopes: ["operator.read"],
     });
@@ -94,6 +114,10 @@ export class NodeBridge {
     for (const node of result?.nodes ?? []) {
       if (node.displayName === displayName || node.nodeId === displayName) {
         this.nodeIdCache.set(displayName, node.nodeId);
+        // Auto-detect platform from node info if available
+        if (node.platform) {
+          this.nodePlatform = node.platform.startsWith("win") ? "win32" : "posix";
+        }
         return node.nodeId;
       }
     }
@@ -114,25 +138,38 @@ export class NodeBridge {
 
     const timeoutMs = opts?.timeoutMs ?? 30_000;
 
-    const result = await this.callGateway({
-      token: this.token,
-      method: "node.invoke",
-      params: {
-        nodeId,
-        command: "system.run",
+    // Wrap command in platform shell for PATH resolution
+    // (matches OpenClaw's native buildNodeShellCommand behavior)
+    const shellArgv = this.wrapForShell(argv);
+
+    let result: any;
+    try {
+      result = await this.callGateway({
+        token: this.token,
+        method: "node.invoke",
         params: {
-          command: argv,
-          cwd: opts?.cwd ?? "~",
+          nodeId,
+          command: "system.run",
+          params: {
+            command: shellArgv,
+            cwd: opts?.cwd ?? undefined, // omit cwd to use node's default (~ doesn't work without shell)
+            timeoutMs,
+          },
           timeoutMs,
+          idempotencyKey: randomUUID(),
         },
-        timeoutMs,
-        idempotencyKey: randomUUID(),
-      },
-      timeoutMs: timeoutMs + 5_000,
-      clientName: "acpx-remote",
-      mode: "backend",
-      scopes: ["operator.write"],
-    });
+        timeoutMs: timeoutMs + 5_000,
+        clientName: "gateway-client",
+        mode: "backend",
+        scopes: ["operator.write"],
+      });
+    } catch (err: any) {
+      this.logger?.error(`[acpx-remote] callGateway error: ${err.message}`);
+      return { exitCode: 1, stdout: "", stderr: err.message ?? "callGateway failed", success: false };
+    }
+
+    // Log raw response for debugging
+    this.logger?.info(`[acpx-remote] system.run raw response: ${JSON.stringify(result)?.slice(0, 500)}`);
 
     const payload = result?.payload ?? result;
     return {

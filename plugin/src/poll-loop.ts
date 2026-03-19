@@ -16,6 +16,7 @@ export async function* pollLoop(
   sessionId: string,
   bridge: NodeBridge,
   opts: {
+    daemonBin: string[];
     pollIntervalMs: number;
     maxPollMs?: number;
     signal?: AbortSignal;
@@ -24,15 +25,15 @@ export async function* pollLoop(
   },
 ): AsyncIterable<PollEvent> {
   const MAX_RETRIES = 3;
-  const MAX_POLL_MS = opts.maxPollMs ?? 300_000;
+  const MAX_IDLE_MS = opts.maxPollMs ?? 300_000;
   const RETRY_DELAY_MS = 2000;
   const MAX_IMMEDIATE_REDRAINS = 10;
-  const pollStartMs = Date.now();
+  let lastActivityMs = Date.now();
   let consecutiveFailures = 0;
 
   while (true) {
-    if (Date.now() - pollStartMs > MAX_POLL_MS) {
-      yield { type: "error", message: `Prompt timed out after ${MAX_POLL_MS / 1000} seconds`, retryable: false };
+    if (Date.now() - lastActivityMs > MAX_IDLE_MS) {
+      yield { type: "error", message: `No activity for ${MAX_IDLE_MS / 1000} seconds — assuming prompt timed out`, retryable: false };
       return;
     }
 
@@ -46,7 +47,7 @@ export async function* pollLoop(
     // Drain events
     let drainResult;
     try {
-      drainResult = await bridge.exec(nodeId, ["acpx-node-daemon", "drain", sessionId]);
+      drainResult = await bridge.exec(nodeId, [...opts.daemonBin, "drain", sessionId]);
 
       if (!drainResult.success) {
         const stderr = drainResult.stderr || drainResult.stdout || "";
@@ -84,8 +85,13 @@ export async function* pollLoop(
     const hasMore = events.some((e: any) => e.type === "has_more");
     const realEvents = events.filter((e: any) => e.type !== "has_more");
 
+    // Reset idle timer on any activity
+    if (realEvents.length > 0) {
+      lastActivityMs = Date.now();
+    }
+
     for (const event of realEvents) {
-      const result = yield* handleEvent(event, nodeId, sessionId, bridge, opts.autoApprove ?? true);
+      const result = yield* handleEvent(event, nodeId, sessionId, bridge, opts.daemonBin, opts.autoApprove ?? true);
       if (result === "stop") return;
     }
 
@@ -96,12 +102,12 @@ export async function* pollLoop(
         await sleep(100);
         redrains++;
         try {
-          const moreResult = await bridge.exec(nodeId, ["acpx-node-daemon", "drain", sessionId]);
+          const moreResult = await bridge.exec(nodeId, [...opts.daemonBin, "drain", sessionId]);
           const moreEvents = parseNdjson(moreResult.stdout);
           const moreHasMore = moreEvents.some((e: any) => e.type === "has_more");
           const moreReal = moreEvents.filter((e: any) => e.type !== "has_more");
           for (const event of moreReal) {
-            const result = yield* handleEvent(event, nodeId, sessionId, bridge, opts.autoApprove ?? true);
+            const result = yield* handleEvent(event, nodeId, sessionId, bridge, opts.daemonBin, opts.autoApprove ?? true);
             if (result === "stop") return;
           }
           if (!moreHasMore) break;
@@ -118,6 +124,7 @@ async function* handleEvent(
   nodeId: string,
   sessionId: string,
   bridge: NodeBridge,
+  daemonBin: string[],
   autoApprove: boolean,
 ): AsyncGenerator<PollEvent, "stop" | "continue"> {
   // Auto-approve permissions
@@ -130,7 +137,7 @@ async function* handleEvent(
     };
     try {
       await bridge.exec(nodeId, [
-        "acpx-node-daemon", "permission-response", sessionId, event.permissionId, "true",
+        ...daemonBin, "permission-response", sessionId, event.permissionId, "true",
       ]);
     } catch {
       yield { type: "error", message: `Failed to auto-approve permission: ${event.description}` };

@@ -13,7 +13,10 @@ export function createAcpxRemoteService(api: any) {
       const bridge = new NodeBridge(api.config);
       runtime = new AcpxRemoteRuntime(config, bridge, api.logger);
 
-      // Register as ACP runtime backend
+      // Always register tools so the agent can call them
+      runtime.registerTools(api);
+
+      // Also register as ACP runtime backend (for future ACP routing support)
       try {
         const { registerAcpRuntimeBackend } = await import(/* @vite-ignore */ "openclaw/plugin-sdk/acpx" as string);
         registerAcpRuntimeBackend({
@@ -23,9 +26,7 @@ export function createAcpxRemoteService(api: any) {
         });
         api.logger?.info("[acpx-remote] registered as ACP runtime backend");
       } catch {
-        api.logger?.warn("[acpx-remote] could not register as ACP backend — falling back to tool registration");
-        // Fallback: register tools directly (for older OpenClaw versions)
-        runtime.registerTools(api);
+        // ACP backend registration not available — tools are still registered
       }
 
       // Non-blocking probe
