@@ -179,6 +179,21 @@ export class Daemon {
           writer,
           pidRegistry: this.pidRegistry,
           onActivity: () => this.sessionManager.resetTtl(req.sessionId),
+          onSessionDead: () => {
+            // Persistent process exited while idle — clean up the session slot
+            this.sessions.delete(req.sessionId);
+            this.permissionProxy.cleanupSession(req.sessionId);
+            this.sessionManager.removeSession(req.sessionId);
+            this.broadcastAndBuffer({
+              type: "session_closed",
+              sessionId: req.sessionId,
+              reason: "process_exited",
+            });
+            this.eventBuffer.markDraining(req.sessionId);
+            if (this.webUI) {
+              this.webUI.removeSession(req.sessionId);
+            }
+          },
         };
         agentSession = new PersistentSession(sessionConfig, this.config.processIdleMinutes);
       } else {

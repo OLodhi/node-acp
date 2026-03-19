@@ -23,4 +23,5 @@ export interface SessionConfig {
   writer?: (line: string) => void;
   pidRegistry?: ChildPidRegistry;
   onActivity?: () => void;
+  onSessionDead?: () => void;  // Called when persistent process exits while idle — daemon should close the session
 }

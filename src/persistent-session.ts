@@ -307,11 +307,19 @@ export class PersistentSession implements ISession {
     }
 
     // Clean up references
+    const wasIdle = this._status === "idle";
     this._proc = null;
     this._rl = null;
     this._pid = undefined;
 
     writer(`${DIM}  [process exited code=${exitCode}]${RESET}`);
+
+    // If the process exited while idle, notify daemon to free the session slot.
+    // Without this, the session stays registered against maxConcurrentSessions
+    // until TTL expiry (2 hours), blocking new sessions.
+    if (wasIdle) {
+      this.config.onSessionDead?.();
+    }
   }
 
   private clearIdleTimer(): void {
