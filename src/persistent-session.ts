@@ -139,8 +139,11 @@ export class PersistentSession implements ISession {
       args.push("--resume", this._claudeSessionId);
     }
 
+    // Resolve ~ to actual home directory (~ is not valid on Windows)
+    const cwd = this.config.cwd === "~" ? require("node:os").homedir() : this.config.cwd;
+
     const proc = spawn(this.config.claudeBin, args, {
-      cwd: this.config.cwd,
+      cwd,
       stdio: ["pipe", "pipe", "pipe"],
       shell: true,
       windowsHide: true,
@@ -170,10 +173,13 @@ export class PersistentSession implements ISession {
     });
 
     // Create spawn promise that resolves when system/init is received
+    // The .catch is a no-op to prevent unhandled rejection — actual error handling
+    // is in handleProcessExit which propagates to _promptReject
     this._spawnPromise = new Promise<void>((resolve, reject) => {
       this._spawnResolve = resolve;
       this._spawnReject = reject;
     });
+    this._spawnPromise.catch(() => {});
 
     // Handle process close
     proc.on("close", (code: number) => {

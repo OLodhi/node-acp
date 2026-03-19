@@ -107,8 +107,11 @@ export class Session implements ISession {
       this.writer(`${DIM}  prompt: ${text.slice(0, 200)}${text.length > 200 ? "..." : ""}${RESET}`);
       this.writer(`${DIM}  resume: ${this._resumeSessionId ?? "(new session)"}${RESET}\n`);
 
+      // Resolve ~ to actual home directory (~ is not valid on Windows)
+      const cwd = this.cwd === "~" ? require("node:os").homedir() : this.cwd;
+
       const proc = spawn(this.claudeBin, args, {
-        cwd: this.cwd,
+        cwd,
         stdio: ["pipe", "pipe", "pipe"],
         shell: true,
         windowsHide: true,
